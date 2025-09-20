@@ -1,0 +1,399 @@
+import re
+import random
+import json
+import datetime
+from typing import Dict, List, Tuple, Optional
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import warnings
+warnings.filterwarnings('ignore')
+
+class CustomerServiceChatbot:
+    """
+    A comprehensive customer service chatbot implementing both rule-based
+    and simple NLP-based approaches for handling customer queries.
+    """
+
+    def __init__(self):
+        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(stopwords.words('english'))
+
+        # Initialize knowledge base
+        self.knowledge_base = self._initialize_knowledge_base()
+
+        # Initialize conversation state
+        self.conversation_state = {
+            'user_name': None,
+            'user_email': None,
+            'current_issue': None,
+            'order_id': None,
+            'last_intent': None
+        }
+
+        # Initialize NLP components
+        self._initialize_nlp()
+
+    def _initialize_nlp(self):
+        """Initialize NLP components"""
+        try:
+            # Download required NLTK data
+            nltk.data.find('tokenizers/punkt')
+            nltk.data.find('corpora/stopwords')
+            nltk.data.find('corpora/wordnet')
+        except LookupError:
+            print("Downloading required NLTK data...")
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+            nltk.download('wordnet', quiet=True)
+
+    def _initialize_knowledge_base(self) -> Dict:
+        """Initialize the knowledge base with common customer service responses"""
+        return {
+            'greetings': {
+                'patterns': [
+                    r'hello|hi|hey|greetings|good morning|good afternoon|good evening',
+                    r'how are you|how do you do|how\'s it going'
+                ],
+                'responses': [
+                    "Hello! Welcome to our customer service. How can I help you today?",
+                    "Hi there! I'm here to assist you with any questions or concerns.",
+                    "Good day! Thank you for reaching out to our customer support.",
+                    "Hello! I'm your virtual assistant. What can I help you with?"
+                ]
+            },
+
+            'goodbyes': {
+                'patterns': [
+                    r'bye|goodbye|see you|farewell|thanks|thank you',
+                    r'have a good|have a nice|take care'
+                ],
+                'responses': [
+                    "Thank you for chatting with us! Have a great day!",
+                    "Goodbye! Feel free to reach out if you need anything else.",
+                    "You're welcome! Take care and have a wonderful day.",
+                    "Thank you for using our service! Goodbye!"
+                ]
+            },
+
+            'order_status': {
+                'patterns': [
+                    r'order status|track order|where is my order|order tracking',
+                    r'delivery|shipping|when will.*arrive|expected delivery'
+                ],
+                'responses': [
+                    "I'd be happy to help you check your order status. Could you please provide your order ID?",
+                    "To track your order, I'll need your order number. Do you have it handy?",
+                    "I can help you track your order. Please share your order ID and I'll look it up for you."
+                ]
+            },
+
+            'refund': {
+                'patterns': [
+                    r'refund|return|money back|cancel order|dissatisfied',
+                    r'not happy|wrong item|damaged|defective'
+                ],
+                'responses': [
+                    "I'm sorry to hear you're not satisfied with your purchase. I can help you with a refund or return. Could you please provide your order ID?",
+                    "I understand you'd like a refund. To process this, I'll need your order details. Do you have your order ID?",
+                    "I'm here to help with your refund request. Please provide your order ID and I'll guide you through the process."
+                ]
+            },
+
+            'technical_support': {
+                'patterns': [
+                    r'not working|broken|error|problem|issue|bug',
+                    r'can\'t|won\'t|doesn\'t|unable to|having trouble'
+                ],
+                'responses': [
+                    "I'm sorry you're experiencing technical difficulties. Could you describe the issue you're facing?",
+                    "I can help you troubleshoot this problem. What exactly is happening when you try to use the product?",
+                    "Let's get this technical issue resolved. Can you tell me more about what's not working?"
+                ]
+            },
+
+            'account': {
+                'patterns': [
+                    r'account|login|password|username|sign in|sign up',
+                    r'forgot|reset|change|update.*account'
+                ],
+                'responses': [
+                    "I can help you with your account. Are you having trouble logging in or do you need to create an account?",
+                    "For account-related issues, I'll need to verify your identity first. Do you have your account email?",
+                    "Let me assist you with your account. What specific help do you need?"
+                ]
+            },
+
+            'payment': {
+                'patterns': [
+                    r'payment|billing|charge|credit card|debit|money',
+                    r'paid|pay|cost|price|fee|amount'
+                ],
+                'responses': [
+                    "I can help you with payment-related questions. What would you like to know about billing or payments?",
+                    "For payment inquiries, could you please provide your order ID so I can look up your transaction?",
+                    "I'm here to help with any payment concerns. What specific question do you have?"
+                ]
+            },
+
+            'complaints': {
+                'patterns': [
+                    r'complaint|angry|upset|frustrated|disappointed|terrible',
+                    r'worst|awful|horrible|bad|poor|unhappy'
+                ],
+                'responses': [
+                    "I'm truly sorry you're unhappy with our service. I want to make this right. Can you tell me more about what happened?",
+                    "I apologize for any inconvenience you've experienced. Please let me know how I can help resolve this issue.",
+                    "Thank you for bringing this to our attention. I'm here to help make things better. What can I do for you?"
+                ]
+            }
+        }
+
+    def preprocess_text(self, text: str) -> str:
+        """Preprocess text for better matching"""
+        # Convert to lowercase
+        text = text.lower()
+
+        # Remove punctuation and special characters
+        text = re.sub(r'[^\w\s]', '', text)
+
+        # Tokenize
+        tokens = word_tokenize(text)
+
+        # Remove stop words and lemmatize
+        processed_tokens = [
+            self.lemmatizer.lemmatize(token)
+            for token in tokens
+            if token not in self.stop_words
+        ]
+
+        return ' '.join(processed_tokens)
+
+    def get_intent(self, user_message: str) -> str:
+        """Determine the intent of the user's message"""
+        processed_message = self.preprocess_text(user_message)
+
+        # Check for specific patterns in order of priority
+        intent_scores = {}
+
+        for intent, data in self.knowledge_base.items():
+            score = 0
+            for pattern in data['patterns']:
+                if re.search(pattern, processed_message, re.IGNORECASE):
+                    score += 1
+            intent_scores[intent] = score
+
+        # Return the intent with the highest score
+        if max(intent_scores.values()) > 0:
+            return max(intent_scores, key=intent_scores.get)
+
+        return 'unknown'
+
+    def get_response(self, intent: str, user_message: str = "") -> str:
+        """Get appropriate response based on intent"""
+        if intent in self.knowledge_base:
+            responses = self.knowledge_base[intent]['responses']
+            return random.choice(responses)
+        else:
+            return self._handle_unknown_query(user_message)
+
+    def _handle_unknown_query(self, user_message: str) -> str:
+        """Handle queries that don't match any known intent"""
+        responses = [
+            "I'm not sure I understand your question. Could you please rephrase it?",
+            "I want to help you, but I need a bit more information. What specific issue are you facing?",
+            "Could you please provide more details about what you're looking for?",
+            "I'm here to assist you. Could you tell me more about your question?",
+            "Let me help you better. What exactly do you need assistance with?"
+        ]
+        return random.choice(responses)
+
+    def extract_entities(self, user_message: str) -> Dict[str, str]:
+        """Extract relevant entities from user message"""
+        entities = {}
+
+        # Extract order ID (assuming format like ORD-12345 or #12345)
+        order_patterns = [
+            r'order[#\s]*(\d+)',
+            r'ord[#\s]*(\d+)',
+            r'#(\d+)',
+            r'order\s+id[:\s]*([A-Za-z0-9]+)'
+        ]
+
+        for pattern in order_patterns:
+            match = re.search(pattern, user_message, re.IGNORECASE)
+            if match:
+                entities['order_id'] = match.group(1)
+                break
+
+        # Extract email
+        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        email_match = re.search(email_pattern, user_message)
+        if email_match:
+            entities['email'] = email_match.group()
+
+        # Extract phone number
+        phone_pattern = r'(\+?1?[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})'
+        phone_match = re.search(phone_pattern, user_message)
+        if phone_match:
+            entities['phone'] = phone_match.group()
+
+        return entities
+
+    def handle_order_status(self, user_message: str) -> str:
+        """Handle order status specific queries"""
+        entities = self.extract_entities(user_message)
+
+        if 'order_id' in entities:
+            order_id = entities['order_id']
+            # Simulate order lookup
+            status_options = ['Processing', 'Shipped', 'Out for Delivery', 'Delivered']
+            status = random.choice(status_options)
+            return f"I found your order {order_id}. Current status: {status}. If you need more details, please let me know!"
+        else:
+            return "To check your order status, please provide your order ID (e.g., #12345 or ORD-12345)."
+
+    def handle_refund_request(self, user_message: str) -> str:
+        """Handle refund request specific queries"""
+        entities = self.extract_entities(user_message)
+
+        if 'order_id' in entities:
+            order_id = entities['order_id']
+            return f"I've initiated a refund request for order {order_id}. You should receive a confirmation email within 24 hours. The refund will be processed to your original payment method within 3-5 business days."
+        else:
+            return "To process your refund, I'll need your order ID. Could you please provide it?"
+
+    def handle_technical_issue(self, user_message: str) -> str:
+        """Handle technical support queries"""
+        return "I understand you're experiencing a technical issue. To better assist you, could you please:\n1. Describe what you're trying to do\n2. What error message (if any) you're seeing\n3. What device/browser you're using\n\nThis will help me provide you with the most accurate solution."
+
+    def handle_account_issue(self, user_message: str) -> str:
+        """Handle account-related queries"""
+        entities = self.extract_entities(user_message)
+
+        if 'email' in entities:
+            email = entities['email']
+            return f"I found your account associated with {email}. What specific help do you need with your account?"
+        else:
+            return "For account-related assistance, I'll need to verify your identity. Could you please provide the email address associated with your account?"
+
+    def process_message(self, user_message: str) -> str:
+        """Main method to process user messages"""
+        if not user_message.strip():
+            return "Please type your message. I'm here to help!"
+
+        # Get intent
+        intent = self.get_intent(user_message)
+
+        # Update conversation state
+        self.conversation_state['last_intent'] = intent
+
+        # Handle specific intents
+        if intent == 'order_status':
+            return self.handle_order_status(user_message)
+        elif intent == 'refund':
+            return self.handle_refund_request(user_message)
+        elif intent == 'technical_support':
+            return self.handle_technical_issue(user_message)
+        elif intent == 'account':
+            return self.handle_account_issue(user_message)
+        else:
+            return self.get_response(intent, user_message)
+
+    def get_conversation_summary(self) -> Dict:
+        """Get a summary of the current conversation state"""
+        return {
+            'user_name': self.conversation_state['user_name'],
+            'user_email': self.conversation_state['user_email'],
+            'current_issue': self.conversation_state['current_issue'],
+            'order_id': self.conversation_state['order_id'],
+            'last_intent': self.conversation_state['last_intent'],
+            'timestamp': datetime.datetime.now().isoformat()
+        }
+
+    def reset_conversation(self):
+        """Reset the conversation state"""
+        self.conversation_state = {
+            'user_name': None,
+            'user_email': None,
+            'current_issue': None,
+            'order_id': None,
+            'last_intent': None
+        }
+
+def demonstrate_chatbot():
+    """Demonstrate the chatbot functionality"""
+    print("🤖 Customer Service Chatbot Demo")
+    print("=" * 50)
+    print("Type 'quit' or 'exit' to end the conversation")
+    print("Type 'reset' to start a new conversation")
+    print("Type 'summary' to see conversation summary")
+    print("-" * 50)
+
+    chatbot = CustomerServiceChatbot()
+
+    # Sample conversation
+    sample_queries = [
+        "Hello, I need help with my order",
+        "Where is my order #12345?",
+        "I want a refund for order #12345",
+        "My account is not working",
+        "Thank you for your help",
+        "I have a technical problem"
+    ]
+
+    print("Sample conversation:")
+    for query in sample_queries:
+        print(f"User: {query}")
+        response = chatbot.process_message(query)
+        print(f"Bot: {response}")
+        print("-" * 30)
+
+    print("\nInteractive mode:")
+    print("You can now chat with the bot. Try asking questions!")
+
+    while True:
+        try:
+            user_input = input("You: ").strip()
+
+            if user_input.lower() in ['quit', 'exit', 'bye']:
+                print("Bot: Thank you for chatting with us! Have a great day!")
+                break
+            elif user_input.lower() == 'reset':
+                chatbot.reset_conversation()
+                print("Bot: Conversation reset. How can I help you?")
+            elif user_input.lower() == 'summary':
+                summary = chatbot.get_conversation_summary()
+                print("Bot: Conversation Summary:")
+                for key, value in summary.items():
+                    print(f"  {key}: {value}")
+            elif user_input:
+                response = chatbot.process_message(user_input)
+                print(f"Bot: {response}")
+
+        except KeyboardInterrupt:
+            print("\nBot: Thank you for chatting with us! Have a great day!")
+            break
+        except Exception as e:
+            print(f"Bot: I'm sorry, I encountered an error: {str(e)}")
+
+def main():
+    """Main function to run the chatbot demonstration"""
+    print("🎯 Customer Service Chatbot")
+    print("=" * 50)
+    print("This chatbot demonstrates:")
+    print("• Rule-based intent recognition")
+    print("• Simple NLP preprocessing")
+    print("• Entity extraction")
+    print("• Context-aware responses")
+    print("• Conversation state management")
+    print("-" * 50)
+
+    # Run demonstration
+    demonstrate_chatbot()
+
+    print("\n✅ Customer Service Chatbot demonstration completed!")
+
+if __name__ == "__main__":
+    main()
