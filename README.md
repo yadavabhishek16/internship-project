@@ -1,1 +1,392 @@
-# internship-project
+//Movie Recommendation System
+
+Build a simple recommendation system that suggests movies based on user ratings or genres.
+Implement collaborative filtering or content-based filtering techniques.
+import numpy as np
+
+
+    def __init__(self):
+        self.movies_df = None
+        self.ratings_df = None
+        self.user_movie_matrix = None
+        self.movie_similarity_matrix = None
+        self.tfidf_matrix = None
+        self.cosine_sim = None
+
+    def load_sample_data(self):
+        """
+        Load sample movie and ratings data for demonstration
+        """
+        # Sample movies data
+        movies_data = {
+            'movie_id': range(1, 21),
+            'title': [
+                'The Shawshank Redemption', 'The Godfather', 'The Dark Knight',
+                'Pulp Fiction', 'Forrest Gump', 'Inception', 'The Matrix',
+                'Goodfellas', 'The Silence of the Lambs', 'Saving Private Ryan',
+                'The Lord of the Rings: The Fellowship of the Ring', 'Star Wars: Episode IV - A New Hope',
+                'The Avengers', 'Titanic', 'Jurassic Park', 'The Lion King',
+                'Avatar', 'Gladiator', 'Fight Club', 'Interstellar'
+            ],
+            'genres': [
+                'Drama', 'Crime|Drama', 'Action|Crime|Drama', 'Crime|Drama',
+                'Drama|Romance', 'Action|Sci-Fi|Thriller', 'Action|Sci-Fi',
+                'Biography|Crime|Drama', 'Crime|Horror|Thriller', 'Drama|War',
+                'Action|Adventure|Drama', 'Action|Adventure|Fantasy', 'Action|Adventure|Sci-Fi',
+                'Drama|Romance', 'Action|Adventure|Sci-Fi', 'Animation|Adventure|Drama',
+                'Action|Adventure|Fantasy', 'Action|Adventure|Drama', 'Drama', 'Adventure|Drama|Sci-Fi'
+            ],
+            'year': [1994, 1972, 2008, 1994, 1994, 2010, 1999, 1990, 1991, 1998,
+                    2001, 1977, 2012, 1997, 1993, 1994, 2009, 2000, 1999, 2014]
+        }
+
+        # Sample ratings data (user_id, movie_id, rating)
+        ratings_data = []
+        np.random.seed(42)
+        for user_id in range(1, 101):  # 100 users
+            # Each user rates 5-15 movies
+            num_ratings = np.random.randint(5, 16)
+            # Fix: Use movie IDs from 1 to 20 to match movies_df
+            rated_movies = np.random.choice(range(1, 21), num_ratings, replace=False)
+            for movie_id in rated_movies:
+                rating = np.random.randint(1, 6)  # 1-5 star ratings
+                ratings_data.append([user_id, movie_id, rating])
+
+        self.movies_df = pd.DataFrame(movies_data)
+        self.ratings_df = pd.DataFrame(ratings_data, columns=['user_id', 'movie_id', 'rating'])
+
+        print("Sample data loaded successfully!")
+        print(f"Movies: {len(self.movies_df)}")
+        print(f"Users: {self.ratings_df['user_id'].nunique()}")
+        print(f"Total ratings: {len(self.ratings_df)}")
+
+    def prepare_collaborative_filtering_data(self):
+        """
+        Prepare user-movie rating matrix for collaborative filtering
+        """
+        self.user_movie_matrix = self.ratings_df.pivot(
+            index='user_id',
+            columns='movie_id',
+            values='rating'
+        ).fillna(0)
+
+        print(f"User -movie matrix shape: {self.user_movie_matrix.shape}")
+
+    def calculate_movie_similarity(self):
+        """
+        Calculate movie similarity matrix using cosine similarity
+        """
+        # Normalize ratings by centering (subtract user mean)
+        user_means = self.user_movie_matrix.mean(axis=1)
+        normalized_matrix = self.user_movie_matrix.sub(user_means, axis=0).fillna(0)
+
+        # Calculate cosine similarity between movies
+        self.movie_similarity_matrix = cosine_similarity(normalized_matrix.T)
+        self.movie_similarity_matrix = pd.DataFrame(
+            self.movie_similarity_matrix,
+            index=self.user_movie_matrix.columns,
+            columns=self.user_movie_matrix.columns
+        )
+
+        print("Movie similarity matrix calculated!")
+
+    def prepare_content_based_data(self):
+        """
+        Prepare TF-IDF matrix for content-based filtering using genres
+        """
+        # Create TF-IDF vectorizer for genres
+        tfidf = TfidfVectorizer(token_pattern=r'(?u)\b\w+\b', stop_words='english')
+
+        # Transform genres into TF-IDF matrix
+        self.tfidf_matrix = tfidf.fit_transform(self.movies_df['genres'])
+
+        # Calculate cosine similarity between movies based on genres
+        self.cosine_sim = cosine_similarity(self.tfidf_matrix, self.tfidf_matrix)
+
+        print("Content-based similarity matrix calculated!")
+
+    def get_collaborative_recommendations(self, user_id: int, n_recommendations: int = 5) -> List[Dict]:
+        """
+        Get movie recommendations using collaborative filtering
+        """
+        if user_id not in self.user_movie_matrix.index:
+            return []
+
+        # Get user's rated movies
+        user_ratings = self.user_movie_matrix.loc[user_id]
+        rated_movies = user_ratings[user_ratings > 0].index
+
+        # Calculate predicted ratings for unrated movies
+        predicted_ratings = {}
+        for movie_id in self.user_movie_matrix.columns:
+            if movie_id not in rated_movies:
+                # Get similarity scores with rated movies
+                similarities = []
+                ratings = []
+
+                for rated_movie in rated_movies:
+                    if self.movie_similarity_matrix.loc[movie_id, rated_movie] > 0:
+                        similarities.append(self.movie_similarity_matrix.loc[movie_id, rated_movie])
+                        ratings.append(user_ratings[rated_movie])
+
+                if similarities:
+                    # Weighted average of ratings from similar movies
+                    predicted_rating = np.average(ratings, weights=similarities)
+                    predicted_ratings[movie_id] = predicted_rating
+
+        # Sort by predicted rating and return top recommendations
+        recommendations = []
+        for movie_id, predicted_rating in sorted(predicted_ratings.items(),
+                                                key=lambda x: x[1], reverse=True)[:n_recommendations]:
+            movie_info = self.movies_df[self.movies_df['movie_id'] == movie_id].iloc[0]
+            recommendations.append({
+                'movie_id': int(movie_id),
+                'title': movie_info['title'],
+                'genres': movie_info['genres'],
+                'year': int(movie_info['year']),
+                'predicted_rating': round(predicted_rating, 2),
+                'method': 'collaborative_filtering'
+            })
+
+        return recommendations
+
+    def get_content_based_recommendations(self, movie_title: str, n_recommendations: int = 5) -> List[Dict]:
+        """
+        Get movie recommendations using content-based filtering
+        """
+        # Find the movie index
+        movie_idx = self.movies_df[self.movies_df['title'] == movie_title].index
+        if len(movie_idx) == 0:
+            return []
+
+        movie_idx = movie_idx[0]
+
+        # Get similarity scores for all movies
+        sim_scores = list(enumerate(self.cosine_sim[movie_idx]))
+        sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+
+        # Get top similar movies (excluding itself)
+        recommendations = []
+        for i, score in sim_scores[1:n_recommendations+1]:
+            movie_info = self.movies_df.iloc[i]
+            recommendations.append({
+                'movie_id': int(movie_info['movie_id']),
+                'title': movie_info['title'],
+                'genres': movie_info['genres'],
+                'year': int(movie_info['year']),
+                'similarity_score': round(score, 3),
+                'method': 'content_based'
+            })
+
+        return recommendations
+
+    def get_hybrid_recommendations(self, user_id: int, movie_title: str = None, n_recommendations: int = 5) -> List[Dict]:
+        """
+        Get hybrid recommendations combining both methods
+        """
+        collaborative_recs = self.get_collaborative_recommendations(user_id, n_recommendations * 2)
+        content_recs = []
+
+        if movie_title:
+            content_recs = self.get_content_based_recommendations(movie_title, n_recommendations * 2)
+
+        # Combine and deduplicate recommendations
+        all_recs = {}
+        for rec in collaborative_recs + content_recs:
+            movie_id = rec['movie_id']
+            if movie_id not in all_recs:
+                all_recs[movie_id] = rec
+
+        # Sort by predicted rating/similarity score
+        recommendations = list(all_recs.values())
+        recommendations.sort(key=lambda x: x.get('predicted_rating', 0) or x.get('similarity_score', 0), reverse=True)
+
+        return recommendations[:n_recommendations]
+
+    def evaluate_collaborative_filtering(self) -> Dict:
+        """
+        Evaluate collaborative filtering performance using RMSE
+        """
+        # Split data into train and test sets
+        train_data, test_data = train_test_split(self.ratings_df, test_size=0.2, random_state=42)
+
+        # Create user-movie matrices
+        train_matrix = train_data.pivot(index='user_id', columns='movie_id', values='rating').fillna(0)
+        test_matrix = test_data.pivot(index='user_id', columns='movie_id', values='rating').fillna(0)
+
+        # Calculate user means for normalization
+        train_user_means = train_matrix.mean(axis=1)
+
+        # Predict ratings
+        predictions = []
+        actuals = []
+
+        for _, row in test_data.iterrows():
+            user_id, movie_id, actual_rating = row['user_id'], row['movie_id'], row['rating']
+
+            if user_id in train_matrix.index and movie_id in train_matrix.columns:
+                user_ratings = train_matrix.loc[user_id]
+                rated_movies = user_ratings[user_ratings > 0].index
+
+                if len(rated_movies) > 0:
+                    similarities = []
+                    ratings = []
+
+                    for rated_movie in rated_movies:
+                        if movie_id in self.movie_similarity_matrix.index:
+                            sim_score = self.movie_similarity_matrix.loc[movie_id, rated_movie]
+                            if sim_score > 0:
+                                similarities.append(sim_score)
+                                ratings.append(user_ratings[rated_movie])
+
+                    if similarities:
+                        predicted_rating = np.average(ratings, weights=similarities)
+                        predictions.append(predicted_rating)
+                        actuals.append(actual_rating)
+
+        rmse = np.sqrt(mean_squared_error(actuals, predictions)) if predictions else float('inf')
+
+        return {
+            'rmse': round(rmse, 3),
+            'predictions_made': len(predictions),
+            'total_test_samples': len(test_data)
+        }
+
+    def plot_rating_distribution(self):
+        """
+        Plot the distribution of movie ratings
+        """
+        plt.figure(figsize=(10, 6))
+        self.ratings_df['rating'].hist(bins=5, edgecolor='black')
+        plt.title('Distribution of Movie Ratings')
+        plt.xlabel('Rating')
+        plt.ylabel('Number of Ratings')
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    def plot_genre_popularity(self):
+        """
+        Plot the popularity of different genres
+        """
+        # Count movies by genre
+        genre_counts = {}
+        for genres in self.movies_df['genres']:
+            for genre in genres.split('|'):
+                genre_counts[genre] = genre_counts.get(genre, 0) + 1
+
+        # Optional: sort genres by count
+        genre_counts = dict(sorted(genre_counts.items(), key=lambda x: x[1], reverse=True))
+
+        plt.figure(figsize=(12, 6))
+        plt.bar(genre_counts.keys(), genre_counts.values())
+        plt.title('Movie Count by Genre')
+        plt.xlabel('Genre')
+        plt.ylabel('Number of Movies')
+        plt.xticks(rotation=45)
+        plt.grid(True, alpha=0.3)
+        plt.show()
+
+    def get_popular_movies(self, n_movies: int = 10) -> List[Dict]:
+        """
+        Get most popular movies based on average rating and number of ratings
+        """
+        # Calculate average rating and rating count for each movie
+        movie_stats = self.ratings_df.groupby('movie_id').agg({
+            'rating': ['mean', 'count']
+        }).round(2)
+
+        movie_stats.columns = ['avg_rating', 'rating_count']
+        movie_stats = movie_stats.sort_values(['avg_rating', 'rating_count'], ascending=False)
+
+        # Get top movies with their details
+        popular_movies = []
+        for movie_id in movie_stats.index[:n_movies]:
+            movie_info = self.movies_df[self.movies_df['movie_id'] == movie_id].iloc[0]
+            stats = movie_stats.loc[movie_id]
+
+            popular_movies.append({
+                'movie_id': int(movie_id),
+                'title': movie_info['title'],
+                'genres': movie_info['genres'],
+                'year': int(movie_info['year']),
+                'avg_rating': float(stats['avg_rating']),
+                'rating_count': int(stats['rating_count'])
+            })
+
+        return popular_movies
+
+def main():
+    """
+    Main function to demonstrate the movie recommendation system
+    """
+    print("🎬 Movie Recommendation System")
+    print("=" * 50)
+
+    # Initialize the recommendation system
+    recommender = MovieRecommendationSystem()
+
+    # Load sample data
+    print("\n1. Loading sample data...")
+    recommender.load_sample_data()
+
+    # Prepare data for both filtering methods
+    print("\n2. Preparing data for collaborative filtering...")
+    recommender.prepare_collaborative_filtering_data()
+    recommender.calculate_movie_similarity()
+
+    print("\n3. Preparing data for content-based filtering...")
+    recommender.prepare_content_based_data()
+
+    # Display some statistics
+    print("\n4. System Statistics:")
+    print(f"   - Total movies: {len(recommender.movies_df)}")
+    print(f"   - Total users: {recommender.ratings_df['user_id'].nunique()}")
+    print(f"   - Total ratings: {len(recommender.ratings_df)}")
+
+    # Get popular movies
+    print("\n5. Most Popular Movies:")
+    popular_movies = recommender.get_popular_movies(5)
+    for i, movie in enumerate(popular_movies, 1):
+        print(f"   {i}. {movie['title']} ({movie['year']}) - {movie['avg_rating']}⭐ ({movie['rating_count']} ratings)")
+
+    # Demonstrate collaborative filtering recommendations
+    print("\n6. Collaborative Filtering Recommendations for User 1:")
+    user_recs = recommender.get_collaborative_recommendations(1, 5)
+    for i, rec in enumerate(user_recs, 1):
+        print(f"   {i}. {rec['title']} - Predicted rating: {rec['predicted_rating']}⭐")
+
+    # Demonstrate content-based filtering recommendations
+    print("\n7. Content-Based Recommendations (similar to 'The Matrix'):")
+    content_recs = recommender.get_content_based_recommendations('The Matrix', 5)
+    for i, rec in enumerate(content_recs, 1):
+        print(f"   {i}. {rec['title']} - Similarity: {rec['similarity_score']}")
+
+    # Demonstrate hybrid recommendations
+    print("\n8. Hybrid Recommendations for User 1 (based on 'Inception'):")
+    hybrid_recs = recommender.get_hybrid_recommendations(1, 'Inception', 5)
+    for i, rec in enumerate(hybrid_recs, 1):
+        if 'predicted_rating' in rec:
+            print(f"   {i}. {rec['title']} - Predicted rating: {rec['predicted_rating']}⭐")
+        else:
+            print(f"   {i}. {rec['title']} - Similarity: {rec['similarity_score']}")
+
+    # Evaluate collaborative filtering
+    print("\n9. Model Evaluation:")
+    evaluation_results = recommender.evaluate_collaborative_filtering()
+    print(f"   - RMSE: {evaluation_results['rmse']}")
+    print(f"   - Predictions made: {evaluation_results['predictions_made']}")
+    print(f"   - Test samples: {evaluation_results['total_test_samples']}")
+
+    # Create visualizations
+    print("\n10. Creating visualizations...")
+    try:
+        recommender.plot_rating_distribution()
+        recommender.plot_genre_popularity()
+        print("   Visualizations created successfully!")
+    except:
+        print("   Note: Visualizations require matplotlib display environment")
+
+    print("\n✅ Movie Recommendation System demonstration completed!")
+
+if __name__ == "__main__":
+    main()
